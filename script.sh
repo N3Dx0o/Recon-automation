@@ -18,11 +18,13 @@ CRT_FILE="$OUTDIR/crtsh.txt"
 AMASS_FILE="$OUTDIR/amass.txt"
 ASSETFINDER_FILE="$OUTDIR/assetfinder.txt"
 SUBFINDER_FILE="$OUTDIR/subfinder.txt"
+GITHUB_FILE="$OUTDIR/github-subdomains.txt"
 COMBINED_FILE="$OUTDIR/all_unique_subdomains.txt"
 LIVE_FILE="$OUTDIR/live_domains.txt"
 CLEAN_LIVE_URLS="$OUTDIR/clean_live_urls.txt"
 RESOLVED_FILE="$OUTDIR/resolved_ips.txt"
 UNIQUE_IPS="$OUTDIR/unique_ips.txt"
+GAU_FILE="$OUTDIR/gau_output.txt"
 WAYBACK_FILE="$OUTDIR/waybackurls_output.txt"
 PORT_SCAN_RESULTS="$OUTDIR/fast_scan_results.txt"
 
@@ -42,11 +44,6 @@ curl -s "https://crt.sh/?q=%25.$DOMAIN&output=json" |
     sort -u > "$CRT_FILE"
 [[ ! -s "$CRT_FILE" ]] && echo "[!] crt.sh found no results or failed."
 
-### Amass ###
-echo "[*] Running Amass (passive)..."
-amass enum -passive -d "$DOMAIN" -max-dns-queries 300 -timeout 5 -o "$AMASS_FILE"
-[[ ! -s "$AMASS_FILE" ]] && echo "[!] Amass found no results or failed."
-
 ### Assetfinder ###
 echo "[*] Running Assetfinder..."
 assetfinder --subs-only "$DOMAIN" > "$ASSETFINDER_FILE"
@@ -57,9 +54,22 @@ echo "[*] Running Subfinder..."
 subfinder -d "$DOMAIN" -silent -o "$SUBFINDER_FILE"
 [[ ! -s "$SUBFINDER_FILE" ]] && echo "[!] Subfinder found no results or failed."
 
+### GitHub Subdomains ###
+echo "[*] Running github-subdomains..."
+github-subdomains -d "$DOMAIN" -t YOUR_GITHUB_TOKEN_HERE 2>/dev/null |
+    grep -oP "\b(?:[\w.-]+\.)?$DOMAIN\b" |
+    grep -v "^$DOMAIN$" |
+    sort -u > "$GITHUB_FILE"
+[[ ! -s "$GITHUB_FILE" ]] && echo "[!] github-subdomains found no results or failed."
+
+### Amass ###
+echo "[*] Running Amass (passive)..."
+amass enum -passive -d "$DOMAIN" -max-dns-queries 300 -timeout 5 -o "$AMASS_FILE"
+[[ ! -s "$AMASS_FILE" ]] && echo "[!] Amass found no results or failed."
+
 ### Combine and deduplicate ###
 echo "[*] Merging and deduplicating subdomains..."
-cat "$SUBLIST3R_FILE" "$CRT_FILE" "$AMASS_FILE" "$ASSETFINDER_FILE" "$SUBFINDER_FILE" |
+cat "$SUBLIST3R_FILE" "$CRT_FILE" "$AMASS_FILE" "$ASSETFINDER_FILE" "$SUBFINDER_FILE" "$GITHUB_FILE" |
     sed -r 's/\x1B\[[0-9;]*[mK]//g' |
     grep -Eo "[a-zA-Z0-9._-]+\.$DOMAIN" |
     sort -u > "$COMBINED_FILE"
@@ -110,6 +120,24 @@ echo "[+] Clean URLs saved to: $CLEAN_LIVE_URLS"
 echo -e "\n[*] Running waybackurls on live URLs..."
 cat "$CLEAN_LIVE_URLS" | waybackurls | sort -u > "$WAYBACK_FILE"
 echo "[+] Wayback URLs saved to: $WAYBACK_FILE"
+
+### gau ###
+echo -e "\n[*] Running gau (GetAllUrls) on live URLs..."
+cat "$CLEAN_LIVE_URLS" | gau --subs | sort -u > "$GAU_FILE"
+echo "[+] gau output saved to: $GAU_FILE"
+
+### Merge waybackurls and gau results ###
+echo -e "\n[*] Merging waybackurls and gau results, removing duplicates..."
+cat "$WAYBACK_FILE" "$GAU_FILE" | sort -u > "$OUTDIR/all_urls_combined.txt"
+echo "[+] Combined unique URLs saved to: $OUTDIR/all_urls_combined.txt"
+
+echo -e "\n[*] Filtering combined URLs with urless for interesting endpoints..."
+urless -i "$OUTDIR/all_urls_combined.txt" \
+       -o "$OUTDIR/interesting_urls_from_gau_and_Waybackurls.txt" \
+       -fe jpg,jpeg,png,gif,svg,webp,css,woff,woff2,ttf,ico,eot,otf,map,html,htm,swf,gif,bmp \
+       -fk login,logout,signup,register
+echo "[+] Filtered interesting URLs saved to: $OUTDIR/interesting_urls.txt"
+
 
 ### Port Scan with RustScan ###
 if [[ "$IP_COUNT" -eq 0 ]]; then
