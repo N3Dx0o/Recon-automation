@@ -1,5 +1,14 @@
 #!/bin/bash
 
+
+REQUIRED_TOOLS=(sublist3r curl jq assetfinder subfinder github-subdomains waybackurls gau amass httpx dnsx getJS xnLinkFinder urless nuclei rustscan)
+for tool in "${REQUIRED_TOOLS[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "[!] $tool is not installed. Please install it before running."
+        exit 1
+    fi
+done
+
 # Prompt for domain input
 read -p "Enter the target domain: " DOMAIN
 
@@ -24,6 +33,7 @@ LIVE_FILE="$OUTDIR/live_domains.txt"
 CLEAN_LIVE_URLS="$OUTDIR/clean_live_urls.txt"
 JSFILES="$OUTDIR/js_files.txt"
 JS_ENDPOINTS="$OUTDIR/xnlinkfinder_endpoints.txt"
+TRUFFLEHOG_OUTPUT="$OUTDIR/trufflehog_github.json"
 RESOLVED_FILE="$OUTDIR/resolved_ips.txt"
 UNIQUE_IPS="$OUTDIR/unique_ips.txt"
 GAU_FILE="$OUTDIR/gau_output.txt"
@@ -247,6 +257,48 @@ else
     COMMON_PORTS="21,22,23,25,53,69,80,110,111,123,135,137,138,139,143,161,389,443,445,512,513,514,587,631,636,873,990,993,995,1080,1433,1521,1723,2049,2082,2083,2181,2222,2375,2379,3306,3389,4443,5000,5432,5900,5984,5985,5986,6379,7001,7002,8080,8081,8089,8443,8888,9200,9300,10000,11211,27017"
     rustscan --ulimit 5000 -a "$UNIQUE_IPS" -p "$COMMON_PORTS" --timeout 350 -g > "$PORT_SCAN_RESULTS"
     echo "[+] Fast port scan results saved to: $PORT_SCAN_RESULTS"
+fi
+
+echo -e "\n[*] Running Shodan scan on unique IPs..."
+SHODAN_OUTPUT="$OUTDIR/shodan_results.txt"
+> "$SHODAN_OUTPUT"
+
+if [[ -s "$UNIQUE_IPS" ]]; then
+    while read -r ip; do
+        echo -e "\033[1;36m[+] IP:\033[0m $ip" | tee -a "$SHODAN_OUTPUT"
+        shodan host "$ip" 2>/dev/null | tee -a "$SHODAN_OUTPUT"
+        echo -e "\033[0;35m----------------------------------------\033[0m" | tee -a "$SHODAN_OUTPUT"
+    done < "$UNIQUE_IPS"
+    echo "[+] Shodan data saved to: $SHODAN_OUTPUT"
+else
+    echo "[!] No unique IPs to scan with Shodan."
+fi
+
+# Optional: TruffleHog GitHub Scan (Manual Org Input)
+# ------------------------------------------
+echo -e "\n[*] TruffleHog: Scan GitHub for secrets"
+
+read -p "Enter GitHub organization name (leave blank to skip): " GITHUB_ORG
+TRUFFLEHOG_OUTPUT="$OUTDIR/trufflehog_results.json"
+
+if [[ -n "$GITHUB_ORG" ]]; then
+    echo "[*] Running TruffleHog for organization: $GITHUB_ORG..."
+    trufflehog github --org "$GITHUB_ORG" --json > "$TRUFFLEHOG_OUTPUT"
+
+    echo -e "\n[*] Beautifying TruffleHog output..."
+    jq -r '
+      "\u001b[1;36m[+] Secret Type:\u001b[0m \(.DetectorName)\n" +
+      "\u001b[1;33mFile:\u001b[0m \(.SourceMetadata.Data.Github.file)\n" +
+      "\u001b[1;34mRepo:\u001b[0m \(.SourceMetadata.Data.Github.repository)\n" +
+      "\u001b[1;32mLine:\u001b[0m \(.SourceMetadata.Data.Github.line)\n" +
+      "\u001b[1;31mRaw:\u001b[0m \(.Raw)\n" +
+      "\u001b[1;35mLink:\u001b[0m \(.SourceMetadata.Data.Github.link)\n" +
+      "\u001b[0m----------------------------------------\n"
+    ' "$TRUFFLEHOG_OUTPUT" 2>/dev/null | while read -r line; do echo -e "$line"; done
+
+    echo "[+] TruffleHog results saved to: $TRUFFLEHOG_OUTPUT"
+else
+    echo "[!] No GitHub organization provided. Skipping TruffleHog scan."
 fi
 echo "------------------------------------------"
 echo "[✔] Done! Results saved in: $OUTDIR"
