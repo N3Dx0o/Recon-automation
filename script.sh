@@ -71,7 +71,7 @@ subfinder -d "$DOMAIN" -silent -o "$SUBFINDER_FILE"
 
 ### GitHub Subdomains ###
 echo "[*] Running github-subdomains..."
-github-subdomains -d "$DOMAIN" -t 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 2>/dev/null |
+github-subdomains -d "$DOMAIN" -t your github token  2>/dev/null |
     grep -oP "\b(?:[\w.-]+\.)?$DOMAIN\b" |
     grep -v "^$DOMAIN$" |
     sort -u > "$GITHUB_FILE"
